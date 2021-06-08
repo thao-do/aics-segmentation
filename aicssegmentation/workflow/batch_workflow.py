@@ -1,6 +1,8 @@
 import numpy as np
 import logging
+import asyncio
 
+from dask.distributed import Client, progress, as_completed
 from typing import Union
 from aicsimageio import AICSImage
 from aicsimageio.writers import OmeTiffWriter
@@ -76,6 +78,131 @@ class BatchWorkflow:
             return True
         else:
             return False
+
+    async def process_file_async(self, file: Path):
+        read_image = AICSImage(file)
+
+        try:
+            # read and format image in the way we expect
+            image_from_path = self.format_image_to_3d(read_image)
+            # Run workflow on image
+            workflow = Workflow(self._workflow_definition, image_from_path)
+            result = await workflow.execute_all_async()
+            with OmeTiffWriter(self._output_dir.joinpath(file.name), overwrite_file=True) as w:
+                w.save(data=self.convert_bool_to_uint8(result), dimension_order="ZYX")
+
+        except Exception as e:
+            # Handle failures during workflow execution/save
+            self._failed_files += 1
+            #self._write_to_log_file(f"FAILED: {file}, ERROR: {e}\n")
+
+    def process_file(self, file: Path):
+        read_image = AICSImage(file)
+
+        try:
+            # read and format image in the way we expect
+            image_from_path = self.format_image_to_3d(read_image)
+            # Run workflow on image
+            workflow = Workflow(self._workflow_definition, image_from_path)
+            result = workflow.execute_all()
+            with OmeTiffWriter(self._output_dir / f"{file.stem}.segmentation.tiff", overwrite_file=True) as w:
+                w.save(data=self.convert_bool_to_uint8(result), dimension_order="ZYX")    
+            print("*** FILE SAVED ***")        
+        except Exception as e:
+            print(f"*** EXCEPTION *** {e}")
+            # Handle failures during workflow execution/save
+            self._failed_files += 1
+            #self._write_to_log_file(f"FAILED: {file}, ERROR: {e}\n")        
+        return file.name
+
+    def process_all_dask(self):
+        import dask
+        log.info("START::process_all_dask")
+        self._write_to_log_file("Log for batch processing run\n")
+
+        files = [f for f in self._input_dir.glob("**/*") if f.is_file]
+        # Currently will save files in same format as they are in the input path
+        tasks = list()
+        for f in files:
+            log.info(f"File={f.name}")
+            self._files_count += 1
+            if self.is_valid_image(f):
+                tasks.append(dask.delayed(self.process_file)(f))
+            else:
+                self._failed_files += 1
+                self._write_to_log_file(f"FAILED: {f}, ERROR: Unsupported Image Type {f.suffix}\n")
+
+        log.info(f"Waiting on {len(tasks)} tasks...")
+
+        #client = Client()
+        #x = dask.persist(*tasks)
+        #progress(x)
+        
+        dask.compute(*tasks)
+        #dask.compute(x)
+        
+        
+        self._write_log_file_summary()
+        log.info("END::process_all_dask")
+
+    def process_all_dask_distributed(self):
+        import dask
+        log.info("START::process_all_dask_distributed")
+        self._write_to_log_file("Log for batch processing run\n")
+
+        files = [f for f in self._input_dir.glob("**/*") if f.is_file]
+        # Currently will save files in same format as they are in the input path
+        #tasks = list()
+        client = Client()
+        futures = list()
+        for f in files:
+            log.info(f"File={f.name}")
+            self._files_count += 1
+            if self.is_valid_image(f):
+                futures.append(client.submit(self.process_file, f))
+            else:
+                self._failed_files += 1
+                self._write_to_log_file(f"FAILED: {f}, ERROR: Unsupported Image Type {f.suffix}\n")
+
+        log.info(f"Waiting on {len(futures)} tasks...")
+
+        #progress(futures)
+        for future, result in as_completed(futures, with_results=True):
+            print(f"**** TASK COMPLETED *** {result}")
+
+        client.close()
+        self._write_log_file_summary()
+        log.info("END::process_all_dask")
+
+    async def process_all_async(self):
+        """
+        Process all images in the input_dir with the workflow_definition used to set up the BatchWorkflow
+
+        Params:
+            none
+
+        Returns:
+            none
+        """
+        print("START::process_all_async")
+        log.info("START::process_all_async")
+        self._write_to_log_file("Log for batch processing run\n")
+
+        files = [f for f in self._input_dir.glob("**/*") if f.is_file]
+        # Currently will save files in same format as they are in the input path
+        tasks = list()
+        for f in files:
+            log.info(f"File={f.name}")
+            self._files_count += 1
+            if self.is_valid_image(f):
+                tasks.append(self.process_file_async(f))
+            else:
+                self._failed_files += 1
+                self._write_to_log_file(f"FAILED: {f}, ERROR: Unsupported Image Type {f.suffix}\n")
+
+        log.info(f"Waiting on {len(tasks)} tasks...")
+        await asyncio.gather(*tasks)
+        self._write_log_file_summary()
 
     def process_all(self):
         """

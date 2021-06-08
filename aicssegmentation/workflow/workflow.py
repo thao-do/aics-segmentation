@@ -64,9 +64,10 @@ class Workflow:
             result (np.ndarray): resultant image from running the
             next workflow step
         """
-        log.info(f"Executing step #{self._next_step}")
-
+        
         step = self.get_next_step()
+
+        log.info(f"Executing step #{step.step_number}")
 
         # Pick which image to perform the workflow step on
         image: np.ndarray = None
@@ -136,6 +137,23 @@ class Workflow:
             return self.get_result(self._next_step - 1)
 
     def execute_all(self) -> np.ndarray:
+        """
+        Execute all steps in the Workflow
+        Note: default parameters will be used to execute the steps. To execute a step
+              with user-provided parameters, use execute_next()
+
+        Params:
+            none
+
+        Returns:
+            (np.ndarray): Result of the final WorkflowStep.
+        """
+        self.reset()
+        while not self.is_done():
+            self.execute_next()
+        return self.get_most_recent_result()
+
+    async def execute_all_async(self) -> np.ndarray:
         """
         Execute all steps in the Workflow
         Note: default parameters will be used to execute the steps. To execute a step
