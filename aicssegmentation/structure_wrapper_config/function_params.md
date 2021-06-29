@@ -1,5 +1,5 @@
 # Glossary
-### Description of parameters in each function widget
+## Description of parameters in each function widget
 
 ***Note: the parameters described here are only for the widgets in the Napari plugin. Not all parameters are exposed to the widget for the sake of simplicity. For programmer users, please refer the full documentation to see the detailed APIs.***  
 
